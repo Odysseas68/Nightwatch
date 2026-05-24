@@ -1,0 +1,38 @@
+## Interface: 120000, 120001, 120005
+## Title: Nightwatch
+## Notes: All your alts, under one moon
+## Author: Odysseus68
+## Version: 2026.05.24
+## SavedVariables: NightwatchDB
+## IconTexture: Interface\AddOns\Nightwatch\Media\icon\Minimap.tga
+## AddonCompartmentFunc: Nightwatch_OnAddonCompartmentClick
+## AddonCompartmentIcon: Interface\AddOns\Nightwatch\Media\icon\Minimap.tga
+
+# ==========================================
+# 1. LIBRARIES (Must load absolutely first)
+# ==========================================
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibSharedMedia-3.0\LibSharedMedia-3.0.lua
+
+# ==========================================
+# 2. CORE NAMESPACE (Creates the NW table)
+# ==========================================
+Core.lua
+
+# ==========================================
+# 3. ENGINE (The actual logic)
+# ==========================================
+Collector.lua
+
+# ==========================================
+# 4. SUPPORT MODULES
+# ==========================================
+Minimap.lua
+Debug.lua
+Tooltip.lua
+
+# ==========================================
+# 5. CONFIGURATION UI (Loads last to ensure all data is available)
+# ==========================================
+Config.lua

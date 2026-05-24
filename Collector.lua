@@ -1,0 +1,377 @@
+-- ============================================================
+-- Addon   : Nightwatch
+-- File    : Collector.lua
+-- Version : 2026.05.24
+-- Desc    : Per-character data snapshot — inventory, bank, currencies, professions
+-- ============================================================
+local addonName, NW = ...
+
+-- ============================================================
+-- Currency list
+-- ============================================================
+
+-- Curated list of tracked currency IDs.
+local TRACKED_CURRENCIES = {
+    -- Crests (Season 1 / TWW)
+    [3008] = "Weathered Crest",
+    [3009] = "Carved Crest",
+    [3010] = "Runed Crest",
+    [3011] = "Gilded Crest",
+    -- Resonance Crystals
+    [3056] = "Resonance Crystals",
+    -- Valorstone
+    [3028] = "Valorstone",
+    -- Conquest
+    [1602] = "Conquest",
+    -- Honor
+    [1792] = "Honor",
+    -- Flightstone (legacy / carry-over)
+    [2707] = "Flightstone",
+}
+
+-- Explicit bag ID tables — safer than arithmetic offset if enum values change
+local CHAR_BANK_BAGS = {
+    Enum.BagIndex.CharacterBankTab_1, Enum.BagIndex.CharacterBankTab_2,
+    Enum.BagIndex.CharacterBankTab_3, Enum.BagIndex.CharacterBankTab_4,
+    Enum.BagIndex.CharacterBankTab_5, Enum.BagIndex.CharacterBankTab_6,
+}
+local ACCOUNT_BANK_BAGS = {
+    Enum.BagIndex.AccountBankTab_1, Enum.BagIndex.AccountBankTab_2,
+    Enum.BagIndex.AccountBankTab_3, Enum.BagIndex.AccountBankTab_4,
+    Enum.BagIndex.AccountBankTab_5,
+}
+
+-- ============================================================
+-- Helpers
+-- ============================================================
+
+--- Returns "CharName-Realm" key for the current character.
+local function GetCharKey()
+    local name  = UnitName("player")
+    local realm = GetRealmName()
+    return name .. "-" .. realm
+end
+
+--- Returns a fresh character snapshot skeleton.
+local function NewCharEntry(name, realm)
+    return {
+        name        = name,
+        realm       = realm,
+        class       = "",
+        level       = 0,
+        equippedIlvl = 0,
+        zone        = "",
+        gold        = 0,
+        lastSeen    = 0,
+        currencies  = {},
+        inventory   = {},
+        bank        = {},
+        warbank     = {},
+        warbankTabs = {},
+        reagentbag  = {},
+        faction     = "",
+        restedXP    = 0,
+        professions = {},
+    }
+end
+
+-- ============================================================
+-- Snapshot functions
+-- ============================================================
+
+--- Collects base character info: class, level, iLevel, zone, gold.
+local function SnapshotCharacterInfo(entry)
+    local _, class = UnitClass("player")
+    entry.class       = class or ""
+    entry.level       = UnitLevel("player") or 0
+    local _, equipped = GetAverageItemLevel()
+    entry.equippedIlvl = math.floor(equipped or 0)
+    entry.zone        = GetRealZoneText() or ""
+    entry.gold        = GetMoney() or 0
+    entry.lastSeen    = time()
+    entry.faction     = UnitFactionGroup("player") or "Neutral"
+    local restedXP    = (GetXPExhaustion and GetXPExhaustion()) or 0
+    local maxXP       = UnitXPMax("player") or 1
+    entry.restedXP    = math.floor((restedXP / maxXP) * 100)
+end
+
+--- Collects all currencies from TRACKED_CURRENCIES.
+local function SnapshotCurrencies(entry)
+    entry.currencies = {}
+    for id in pairs(TRACKED_CURRENCIES) do
+        local info = C_CurrencyInfo.GetCurrencyInfo(id)
+        if info and info.quantity > 0 then
+            entry.currencies[id] = {
+                amount               = info.quantity,
+                cap                  = info.maxQuantity,
+                isAccountWide        = info.isAccountWide or false,
+                isAccountTransferable = info.isAccountTransferable or false,
+            }
+        end
+    end
+end
+
+--- Snapshots all professions including per-expansion skill breakdown.
+local function SnapshotProfessions(entry)
+    entry.professions = {}
+
+    -- GetProfessions() returns reliable slots with correct skill data.
+    -- GetAllProfessionTradeSkillLines() returns ALL expansion lines but only
+    -- has skill data for lines the tradeskill frame has been opened for.
+    -- We use GetProfessions() as the primary source and GetAllProfessionTradeSkillLines()
+    -- only to find which parentID each root profession maps to.
+
+    -- Build a lookup: parentSkillLine -> slot data from GetProfessions()
+    local slots = { GetProfessions() }
+    for _, slot in ipairs(slots) do
+        if slot then
+            local name, icon, skillLevel, maxSkillLevel, _, _, skillLine = GetProfessionInfo(slot)
+            if name and skillLine then
+                local info = C_TradeSkillUI.GetProfessionInfoBySkillLineID(skillLine)
+                -- skillLine here IS the parent root ID (333=Enchanting etc.)
+                entry.professions[skillLine] = {
+                    name           = name,
+                    icon           = icon,
+                    skillLevel     = skillLevel    or 0,
+                    maxSkillLevel  = maxSkillLevel or 0,
+                    isPrimary      = info and info.isPrimaryProfession or false,
+                    enumProfession = info and info.profession or nil,
+                    expansions     = {},
+                }
+            end
+        end
+    end
+
+    -- Now fill expansion breakdown from GetAllProfessionTradeSkillLines()
+    -- Only store lines that belong to a profession we actually have (parentID in our map)
+    -- and that have real skill data (maxSkillLevel > 0)
+    local allLines = C_TradeSkillUI.GetAllProfessionTradeSkillLines()
+    if allLines then
+        for _, childLine in ipairs(allLines) do
+            local info = C_TradeSkillUI.GetProfessionInfoBySkillLineID(childLine)
+            if info and info.parentProfessionID then
+                local parentID = info.parentProfessionID
+                if entry.professions[parentID] and (info.maxSkillLevel or 0) > 0 then
+                    entry.professions[parentID].expansions[childLine] = {
+                        skillLevel    = info.skillLevel    or 0,
+                        maxSkillLevel = info.maxSkillLevel or 0,
+                    }
+                end
+            end
+        end
+    end
+
+    -- Compute and store totals across all expansion lines for fast panel display
+    for skillLine, prof in pairs(entry.professions) do
+        local total, maxTotal = 0, 0
+        for _, exp in pairs(prof.expansions) do
+            total    = total    + (exp.skillLevel    or 0)
+            maxTotal = maxTotal + (exp.maxSkillLevel or 0)
+        end
+        if maxTotal > 0 then
+            prof.totalSkill    = total
+            prof.totalMaxSkill = maxTotal
+        else
+            prof.totalSkill    = prof.skillLevel    or 0
+            prof.totalMaxSkill = prof.maxSkillLevel or 0
+        end
+    end
+end
+
+--- Dumps all profession skillLineIDs and names to chat — for building expansion name table.
+function NW.DumpProfessionLines()
+    local allLines = C_TradeSkillUI.GetAllProfessionTradeSkillLines()
+    if not allLines then print("Nightwatch: No profession lines found."); return end
+    print(string.format("|cffA78BFANightwatch:|r %d profession skill lines:", #allLines))
+    for _, skillLine in ipairs(allLines) do
+        local info = C_TradeSkillUI.GetProfessionInfoBySkillLineID(skillLine)
+        if info then
+            print(string.format("  [%d] %s / parent:%s (skill %d/%d, primary:%s)",
+                skillLine,
+                info.professionName or "?",
+                tostring(info.parentProfessionID or "nil"),
+                info.skillLevel or 0,
+                info.maxSkillLevel or 0,
+                tostring(info.isPrimaryProfession)))
+        end
+    end
+end
+local function SnapshotBags(entry)
+    entry.inventory  = {}
+    entry.reagentbag = {}
+    for bag = 0, NUM_BAG_SLOTS do
+        local slots = C_Container.GetContainerNumSlots(bag)
+        for slot = 1, slots do
+            local info = C_Container.GetContainerItemInfo(bag, slot)
+            if info and info.itemID then
+                local id = info.itemID
+                entry.inventory[id] = (entry.inventory[id] or 0) + info.stackCount
+            end
+        end
+    end
+    -- Reagent bag scanned separately for tooltip display
+    local reagentSlots = C_Container.GetContainerNumSlots(Enum.BagIndex.ReagentBag)
+    for slot = 1, reagentSlots do
+        local info = C_Container.GetContainerItemInfo(Enum.BagIndex.ReagentBag, slot)
+        if info and info.itemID then
+            local id = info.itemID
+            entry.reagentbag[id] = (entry.reagentbag[id] or 0) + info.stackCount
+        end
+    end
+end
+
+--- Scans personal bank tabs (only valid while bank frame is open).
+local function SnapshotBank(entry)
+    entry.bank = {}
+    local tabCount = C_Bank.FetchNumPurchasedBankTabs(Enum.BankType.Character) or 0
+    for tab = 1, tabCount do
+        local bagID = CHAR_BANK_BAGS[tab]
+        local slots = C_Container.GetContainerNumSlots(bagID)
+        for slot = 1, slots do
+            local info = C_Container.GetContainerItemInfo(bagID, slot)
+            if info and info.itemID then
+                local id = info.itemID
+                entry.bank[id] = (entry.bank[id] or 0) + info.stackCount
+            end
+        end
+    end
+end
+
+--- Scans warbank tabs and stores counts per-tab with tab names.
+local function SnapshotWarbank(entry)
+    entry.warbank     = {}
+    entry.warbankTabs = {}
+
+    -- Fetch tab metadata for names (only available while bank is open)
+    local tabData = C_Bank.FetchPurchasedBankTabData(Enum.BankType.Account) or {}
+    for _, tab in ipairs(tabData) do
+        entry.warbankTabs[tab.ID] = tab.name
+    end
+
+    local tabCount = C_Bank.FetchNumPurchasedBankTabs(Enum.BankType.Account) or 0
+    for tabIndex = 1, tabCount do
+        local bagID = ACCOUNT_BANK_BAGS[tabIndex]
+        if bagID then
+            local slots = C_Container.GetContainerNumSlots(bagID)
+            for slot = 1, slots do
+                local info = C_Container.GetContainerItemInfo(bagID, slot)
+                if info and info.itemID then
+                    local id = info.itemID
+                    if not entry.warbank[id] then entry.warbank[id] = {} end
+                    entry.warbank[id][bagID] = (entry.warbank[id][bagID] or 0) + info.stackCount
+                end
+            end
+        end
+    end
+end
+
+-- ============================================================
+-- Full snapshot entry point
+-- ============================================================
+
+--- Runs a full snapshot of the current character and writes to NW.db.
+local function SnapshotCharacter()
+    if not NW.db then return end
+    local name  = UnitName("player")
+    local realm = GetRealmName()
+    local key   = name .. "-" .. realm
+
+    local chars = NW.db.characters
+    if not chars[key] then
+        chars[key] = NewCharEntry(name, realm)
+    end
+
+    local entry = chars[key]
+    SnapshotCharacterInfo(entry)
+    SnapshotCurrencies(entry)
+    SnapshotBags(entry)
+    SnapshotProfessions(entry)
+    NW.LogDebug("Collector", "Snapshot complete for " .. key)
+    if NW.RefreshUI then NW.RefreshUI() end
+end
+
+-- ============================================================
+-- Login hook + bank events
+-- ============================================================
+
+--- Called by Core on PLAYER_LOGIN.
+NW.RegisterOnLogin(SnapshotCharacter)
+
+local eventFrame = CreateFrame("Frame")
+eventFrame:RegisterEvent("BANKFRAME_OPENED")
+eventFrame:RegisterEvent("PLAYER_MONEY")
+eventFrame:RegisterEvent("BAG_UPDATE")
+eventFrame:RegisterEvent("SKILL_LINES_CHANGED")
+eventFrame:RegisterEvent("TRADE_SKILL_SHOW")
+
+local profRefreshPending = false
+local bagScanPending     = false
+
+local function ScheduleProfRefresh(entry, source)
+    if profRefreshPending then return end
+    profRefreshPending = true
+    C_Timer.After(0.5, function()
+        if not NW.db then profRefreshPending = false; return end
+        SnapshotProfessions(entry)
+        profRefreshPending = false
+        NW.LogDebug("Collector", "Professions refreshed (" .. source .. ")")
+        if NW.RefreshUI then NW.RefreshUI() end
+    end)
+end
+
+eventFrame:SetScript("OnEvent", function(_, event)
+    if event == "BANKFRAME_OPENED" then
+        if not NW.db then return end
+        local key   = GetCharKey()
+        local entry = NW.db.characters[key]
+        if not entry then return end
+        SnapshotBank(entry)
+        SnapshotWarbank(entry)
+        NW.LogDebug("Collector", "Bank + Warbank snapshot for " .. key)
+        if NW.RefreshUI then NW.RefreshUI() end
+
+    elseif event == "PLAYER_MONEY" then
+        if not NW.db then return end
+        local key   = GetCharKey()
+        local entry = NW.db.characters[key]
+        if entry then
+            entry.gold    = GetMoney()
+            entry.lastSeen = time()
+        end
+
+    elseif event == "SKILL_LINES_CHANGED" then
+        if not NW.db then return end
+        local key   = GetCharKey()
+        local entry = NW.db.characters[key]
+        if entry then
+            ScheduleProfRefresh(entry, "SKILL_LINES_CHANGED")
+        end
+
+    elseif event == "TRADE_SKILL_SHOW" then
+        if not NW.db then return end
+        local key   = GetCharKey()
+        local entry = NW.db.characters[key]
+        if entry then
+            C_Timer.After(0.2, function()
+                if not NW.db then return end
+                SnapshotProfessions(entry)
+                NW.LogDebug("Collector", "Professions refreshed (TRADE_SKILL_SHOW)")
+                if NW.RefreshUI then NW.RefreshUI() end
+            end)
+        end
+
+    elseif event == "BAG_UPDATE" then
+        if not NW.db then return end
+        if not bagScanPending then
+            bagScanPending = true
+            C_Timer.After(1.5, function()
+                if not NW.db then return end
+                local key   = GetCharKey()
+                local entry = NW.db.characters[key]
+                if entry then SnapshotBags(entry) end
+                if NW.RefreshUI then NW.RefreshUI() end
+                bagScanPending = false
+            end)
+        end
+    end
+end)
