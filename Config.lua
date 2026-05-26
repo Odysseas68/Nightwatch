@@ -207,8 +207,8 @@ local function UpdateBottomBar()
     for key in pairs(NW.db.characters) do
         if not NW.db.settings.hiddenChars[key] then chars = chars + 1 end
     end
-    bottomCharFS:SetText(string.format("|cff888888Characters:|r %d", chars))
-    bottomRealmFS:SetText(string.format("|cff888888Realms:|r %d", CountRealms()))
+    bottomCharFS:SetText(string.format("|cffBBBBBBCharacters:|r %d", chars))
+    bottomRealmFS:SetText(string.format("|cffBBBBBBRealms:|r %d", CountRealms()))
 ---@diagnostic disable-next-line: undefined-global
     bottomGoldFS:SetText("Total Gold: " .. FormatGold(TotalGold(currentRealmFilter)))
 end
@@ -231,7 +231,7 @@ sidebar:SetBackdropBorderColor(0.25, 0.18, 0.40, 0.8)
 
 local realmLabel = sidebar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 realmLabel:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 10, -10)
-realmLabel:SetText("|cff888888Realm|r")
+realmLabel:SetText("|cffBBBBBBRealm|r")
 
 local currentRealmFilter = nil
 
@@ -275,11 +275,15 @@ local NAV_TOP     = -56
 local function SetNavActive(id)
     for navId, btn in pairs(navButtonRefs) do
         if navId == id then
-            btn.bg:SetColorTexture(0.30, 0.20, 0.50, 0.7)
+            btn.sel:Show()
             btn.label:SetTextColor(1, 1, 1)
         else
-            btn.bg:SetColorTexture(0, 0, 0, 0)
-            btn.label:SetTextColor(0.8, 0.8, 0.8)
+            btn.sel:Hide()
+            if btn.isChild then
+                btn.label:SetTextColor(1, 1, 1)
+            else
+                btn.label:SetTextColor(1, 0.82, 0.0)
+            end
         end
     end
 end
@@ -292,33 +296,61 @@ local function MakeNavButton(parent, id, label, yOff, isChild)
     btn:SetSize(SIDEBAR_WIDTH - 16, NAV_BTN_H)
     btn:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, yOff)
 
+    -- Normal background texture (atlas)
     local bg = btn:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints()
-    bg:SetColorTexture(0, 0, 0, 0)
+    if isChild then
+        bg:SetAtlas("auctionhouse-nav-button-secondary", false)
+        bg:SetSize(133, 32)
+        bg:SetPoint("TOPLEFT", btn, "TOPLEFT", 1, 0)
+    else
+        bg:SetAtlas("auctionhouse-nav-button", false)
+        bg:SetSize(136, 32)
+        bg:SetPoint("TOPLEFT", btn, "TOPLEFT", -2, 0)
+    end
     btn.bg = bg
 
-    local arrow
-    if not isChild then
-        arrow = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        arrow:SetPoint("LEFT", btn, "LEFT", indent, 0)
-        arrow:SetTextColor(0.6, 0.6, 0.7)
-        btn.arrow = arrow
+    -- Highlight texture (hover)
+    local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+    if isChild then
+        hl:SetAtlas("auctionhouse-nav-button-secondary-highlight", false)
+        hl:SetSize(122, 21)
+        hl:SetPoint("TOPLEFT", btn, "TOPLEFT", 10, 0)
+    else
+        hl:SetAtlas("auctionhouse-nav-button-highlight", false)
+        hl:SetSize(132, 21)
+        hl:SetPoint("LEFT", btn, "LEFT", 0, 0)
     end
+    hl:SetBlendMode("BLEND")
+    btn.hl = hl
 
-    local labelX = isChild and indent or (arrow and indent + 14 or indent)
+    -- Selected texture
+    local sel = btn:CreateTexture(nil, "ARTWORK")
+    if isChild then
+        sel:SetAtlas("auctionhouse-nav-button-secondary-select", false)
+        sel:SetSize(122, 21)
+        sel:SetPoint("TOPLEFT", btn, "TOPLEFT", 10, 0)
+    else
+        sel:SetAtlas("auctionhouse-nav-button-select", false)
+        sel:SetSize(132, 21)
+        sel:SetPoint("LEFT", btn, "LEFT", 0, 0)
+    end
+    sel:Hide()
+    btn.sel = sel
+
+    local labelX = isChild and indent or indent + 4
     local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     fs:SetPoint("LEFT", btn, "LEFT", labelX, 0)
     fs:SetText(label)
     fs:SetWidth(SIDEBAR_WIDTH - labelX - 16)
     btn.label = fs
+    btn.isChild = isChild
+    if isChild then
+        fs:SetTextColor(1, 1, 1)
+    else
+        fs:SetTextColor(1, 0.82, 0.0)
+    end
 
-    btn:SetScript("OnEnter", function()
-        if NW.activePanel ~= id then bg:SetColorTexture(0.2, 0.2, 0.3, 0.5) end
-    end)
-    btn:SetScript("OnLeave", function()
-        if NW.activePanel ~= id then bg:SetColorTexture(0, 0, 0, 0) end
-    end)
-
+    -- OnEnter/OnLeave not needed — HIGHLIGHT layer handles hover automatically
     navButtonRefs[id] = btn
     return btn
 end
@@ -336,7 +368,6 @@ RebuildNav = function()
         local btn = MakeNavButton(sidebar, item.id, item.label, yOff, false)
 
         if hasChildren then
-            btn.arrow:SetText(expanded and "▾" or "▸")
             btn:SetScript("OnClick", function()
                 local nowExpanded = not IsExpanded(item.id)
                 SetExpanded(item.id, nowExpanded)
@@ -446,14 +477,10 @@ local function BuildCharacterSummaryPanel()
 
     local chars = GetVisibleChars(currentRealmFilter)
 
-    local summaryText = charHeaderPane:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    summaryText:SetPoint("TOPLEFT", charHeaderPane, "TOPLEFT", COL_NAME, -6)
-    summaryText:SetText(string.format("|cff888888%d character(s)|r", #chars))
-
     local function MakeHeader(label, xOff, yOff)
         local fs = charHeaderPane:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         fs:SetPoint("TOPLEFT", charHeaderPane, "TOPLEFT", xOff, yOff)
-        fs:SetTextColor(0.5, 0.5, 0.6)
+        fs:SetTextColor(0.80, 0.80, 0.90)
         fs:SetText(label)
     end
     local headerY = -22
@@ -526,7 +553,7 @@ local function BuildCharacterSummaryPanel()
 
         local seenFS = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         seenFS:SetPoint("LEFT", row, "LEFT", COL_LASTSEEN, 0)
-        seenFS:SetTextColor(0.4, 0.4, 0.5)
+        seenFS:SetTextColor(0.65, 0.65, 0.72)
         local seenStr = (char.lastSeen and char.lastSeen > 0)
             and tostring(date("%d/%m/%Y", char.lastSeen)) or "Never"
         seenFS:SetText(seenStr)
@@ -574,7 +601,7 @@ local function BuildProfessionsPanel()
     local function MakeHdr(label, x)
         local fs = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         fs:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", x, -8)
-        fs:SetTextColor(0.5, 0.5, 0.6)
+        fs:SetTextColor(0.80, 0.80, 0.90)
         fs:SetText(label)
     end
 
@@ -865,7 +892,7 @@ local function BuildCurrenciesPanel()
     -- Column headers
     local hdrCurr = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     hdrCurr:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4, yOff)
-    hdrCurr:SetTextColor(0.5, 0.5, 0.6)
+    hdrCurr:SetTextColor(0.80, 0.80, 0.90)
     hdrCurr:SetText("Currency")
     for i, entry in ipairs(chars) do
         local hdr = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
