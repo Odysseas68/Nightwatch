@@ -1,7 +1,7 @@
 -- ============================================================
 -- Addon   : Nightwatch
 -- File    : Config.lua
--- Version : 2026.05.24
+-- Version : 2026.05.26
 -- Desc    : Main UI — expandable nav, panels, status bar
 -- ============================================================
 local addonName, NW = ...
@@ -209,7 +209,7 @@ local function UpdateBottomBar()
     end
     bottomCharFS:SetText(string.format("|cff888888Characters:|r %d", chars))
     bottomRealmFS:SetText(string.format("|cff888888Realms:|r %d", CountRealms()))
-    bottomGoldFS:SetText("Total Gold: " .. FormatGold(TotalGold()))
+    bottomGoldFS:SetText("Total Gold: " .. FormatGold(TotalGold(currentRealmFilter)))
 end
 
 -- ============================================================
@@ -1175,7 +1175,7 @@ local function BuildSettingsPanel()
                 NW.ApplyFont(fname); dropBtn:SetText(fname); listFrame:Hide(); listOpen = false
             end)
         end
-        yOff = yOff - dropH - 10
+        yOff = yOff - dropH - listH - 14
     else
         local noLSM = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         noLSM:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4, yOff)
