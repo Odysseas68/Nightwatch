@@ -1,3 +1,4 @@
+---@diagnostic disable: unbalanced-assignments
 --@curseforge-project-slug: libsharedmedia-3-0@
 --[[
 Name: LibSharedMedia-3.0

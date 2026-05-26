@@ -209,6 +209,7 @@ local function UpdateBottomBar()
     end
     bottomCharFS:SetText(string.format("|cff888888Characters:|r %d", chars))
     bottomRealmFS:SetText(string.format("|cff888888Realms:|r %d", CountRealms()))
+---@diagnostic disable-next-line: undefined-global
     bottomGoldFS:SetText("Total Gold: " .. FormatGold(TotalGold(currentRealmFilter)))
 end
 
