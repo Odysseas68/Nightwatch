@@ -60,11 +60,6 @@ NightwatchDB = {
         hiddenChars        = {},          -- ["Name-Realm"] = true to hide
         navExpanded        = {},          -- ["navItemId"] = true when expanded — persisted across sessions
         tooltipModifier    = "ALT",       -- modifier key for item tooltip counts: ALT / CTRL / SHIFT
-        trackedCurrencies  = {            -- currencyID = true/false
-            [3008] = true, [3009] = true, [3010] = true, [3011] = true,
-            [3056] = true, [3028] = true, [1602] = true, [1792] = true,
-            [2707] = true,
-        },
     }
 }
 ```
@@ -131,6 +126,10 @@ NightwatchDB = {
 - `C_Item.GetItemNameByID` does not exist — use `C_Item.GetItemInfo(itemID)`
 - `UIDropDownMenu` / `ToggleDropDownMenu` are deprecated — use `Menu.CreateContextMenu`
 - `time()` is correct for persistent timestamps — `GetTime()` is session-only uptime
+- `C_CurrencyInfo.GetCurrencyListSize()` — returns total count of entries (currencies + section headers) in the player's currency tab. Valid in 12.0+.
+- `C_CurrencyInfo.GetCurrencyListInfo(index)` — returns a `CurrencyInfo` struct for each entry. Filter with `not info.isHeader` to skip section headers; use `info.currencyID` as DB key; `info.quantity` for current amount; `info.maxQuantity` for cap (0 = no cap). Valid in 12.0+.
+- `CURRENCY_DISPLAY_UPDATE` — fires whenever any currency amount changes. Use to re-snapshot currencies in real time. Safe to call `SnapshotCurrencies` directly in the handler (no debounce needed — it's a lightweight list scan).
+- Currency snapshot is fully dynamic — no hardcoded ID list. `SnapshotCurrencies` scans the full currency list and stores all with `quantity > 0`. The display panels (Config.lua) define which IDs to show and where.
 - `C_Bank.GetBankTabInfo` does not exist — use `C_Bank.FetchPurchasedBankTabData(Enum.BankType.Account)`
 - `C_Bank.FetchPurchasedBankTabData` returns `{ [i] = { ID, name, icon, bankType, depositFlags, ... } }`
 - `ID` in tab data matches `Enum.BagIndex` values (12-16 for warbank) — use as the key for `warbankTabs`

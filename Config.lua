@@ -40,22 +40,35 @@ local NAV_TREE = {
     {
         id       = "currencies",
         label    = "Currencies",
-        children = {},
+        children = {
+            { id = "currencies_midnight", label = "Midnight"       },
+            { id = "currencies_misc",     label = "Miscellaneous"  },
+            { id = "currencies_pvp",      label = "PvP"            },
+        },
     },
     { id = "inventory", label = "Inventory",  children = {} },
     { id = "settings",  label = "Settings",   children = {} },
 }
 
--- Currency definitions grouped by expansion
-local CURRENCY_EXPANSIONS = {
-    {
-        label = "The War Within",
-        ids   = { 3008, 3009, 3010, 3011, 3056, 3028, 2707 },
-    },
-    {
-        label = "PvP",
-        ids   = { 1602, 1792 },
-    },
+-- Midnight Season 1 Dawncrest crests — ordered Adventurer→Myth
+local DAWNCREST_CRESTS = {
+    { id = 3383, name = "Adventurer Dawncrest", icon = 7639517 },
+    { id = 3341, name = "Veteran Dawncrest",    icon = 7639525 },
+    { id = 3343, name = "Champion Dawncrest",   icon = 7639519 },
+    { id = 3345, name = "Hero Dawncrest",       icon = 7639521 },
+    { id = 3347, name = "Myth Dawncrest",       icon = 7639523 },
+}
+
+-- Miscellaneous cross-expansion currencies
+local MISC_CURRENCIES = {
+    { id = 2032, name = "Trader's Tender",  icon = 4696085 },
+    { id = 1166, name = "Timewarped Badge", icon = 463446  },
+}
+
+-- PvP currencies
+local PVP_CURRENCIES = {
+    { id = 1792, name = "Honor",    icon = 1455894 },
+    { id = 1602, name = "Conquest", icon = 1523630 },
 }
 
 -- Theme presets
@@ -725,7 +738,31 @@ local function BuildProfessionsPanel()
 
         if #sorted > 0 then
             GameTooltip:AddLine(" ")
-            table.sort(sorted, function(a, b) return a.skillLine > b.skillLine end)
+            -- Newest expansion first — label prefix matched against known order
+            local EXPANSION_ORDER = {
+                ["Midnight"]      = 1,
+                ["Khaz Algar"]    = 2,
+                ["Dragon Isles"]  = 3,
+                ["Shadowlands"]   = 4,
+                ["Kul Tiran"]     = 5,
+                ["Zandalar"]      = 5,
+                ["Legion"]        = 6,
+                ["Draenor"]       = 7,
+                ["Pandaria"]      = 8,
+                ["Cataclysm"]     = 9,
+                ["Northrend"]     = 10,
+                ["Outland"]       = 11,
+                ["Classic"]       = 12,
+            }
+            local function ExpansionRank(label)
+                for prefix, rank in pairs(EXPANSION_ORDER) do
+                    if label:find(prefix, 1, true) then return rank end
+                end
+                return 99
+            end
+            table.sort(sorted, function(a, b)
+                return ExpansionRank(a.label) < ExpansionRank(b.label)
+            end)
             for _, expRow in ipairs(sorted) do
                 local pct   = math.floor((expRow.skill / expRow.maxSkill) * 100)
                 local color = pct >= 100 and "FFD700" or "DDDDDD"
@@ -880,118 +917,150 @@ end
 -- Currencies panel (grouped by expansion)
 -- ============================================================
 
+-- Placeholder shown when parent "Currencies" node is clicked directly
 local function BuildCurrenciesPanel()
     ClearContent()
     ResetScrollFrame()
+    local fs = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    fs:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4, -8)
+    fs:SetText("|cff888888Select an expansion from the left panel.|r")
+    scrollChild:SetHeight(CONTENT_HEIGHT)
+end
+
+local FACTION_ICONS = {
+    Alliance = "Interface\\Icons\\Inv_misc_tournaments_banner_human",
+    Horde    = "Interface\\Icons\\Inv_misc_tournaments_banner_orc",
+}
+
+--- Shared currency panel builder — used by all currency sub-panels.
+--- list = { { id, name, icon }, ... } — defines columns after Name/Lvl.
+--- colStart = x offset of first currency column (default 210).
+--- colW     = width per currency column (default 52).
+local function BuildCurrencyPanel(list, colStart, colW)
+    ClearContent()
+    ResetScrollFrame()
+
+    colStart = colStart or 210
+    colW     = colW     or 52
 
     local chars   = GetVisibleChars(currentRealmFilter)
-    local COL_W   = 110
-    local ROW_H   = 20
-    local yOff    = -8
+    local ROW_H   = 26
+    local ICON_SZ = 20
+    local COL_FACTION = 4
+    local COL_NAME    = 26
+    local COL_LVL     = 180
 
-    -- Column headers
-    local hdrCurr = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    hdrCurr:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4, yOff)
-    hdrCurr:SetTextColor(0.80, 0.80, 0.90)
-    hdrCurr:SetText("Currency")
-    for i, entry in ipairs(chars) do
-        local hdr = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        hdr:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", COL_W * i, yOff)
-        hdr:SetText(ColoredName(entry.data.name or "?", entry.data.class))
-        hdr:SetWidth(COL_W - 4)
+    -- Header row
+    local function MakeHdr(text, x)
+        local fs = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", x, -8)
+        fs:SetTextColor(0.80, 0.80, 0.90)
+        fs:SetText(text)
     end
-    yOff = yOff - ROW_H
-    MakeDivider(scrollChild, yOff)
-    yOff = yOff - 6
+    MakeHdr("Name", COL_NAME)
+    MakeHdr("Lvl",  COL_LVL)
 
-    for _, exp in ipairs(CURRENCY_EXPANSIONS) do
-        -- Skip expansion if no chars have any of its currencies
-        local hasAny = false
-        for _, id in ipairs(exp.ids) do
-            for _, entry in ipairs(chars) do
-                if entry.data.currencies and entry.data.currencies[id] then
-                    hasAny = true; break
-                end
-            end
-            if hasAny then break end
+    -- Icon header per currency column with tooltip
+    for ci, curr in ipairs(list) do
+        local x      = colStart + (ci - 1) * colW
+        local iconX  = x + math.floor((colW - ICON_SZ) / 2)   -- centered in column
+        local tex = scrollChild:CreateTexture(nil, "ARTWORK")
+        tex:SetSize(ICON_SZ, ICON_SZ)
+        tex:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", iconX, -4)
+        tex:SetTexture(curr.icon)
+        tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        local hoverBtn = CreateFrame("Button", nil, scrollChild)
+        hoverBtn:SetSize(ICON_SZ + 4, ICON_SZ + 4)
+        hoverBtn:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", iconX - 2, -3)
+        hoverBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:ClearLines()
+            GameTooltip:AddLine(curr.name, 1, 0.82, 0)
+            GameTooltip:Show()
+        end)
+        hoverBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+
+    MakeDivider(scrollChild, -28)
+    local yOff = -32
+
+    -- Character rows
+    for i, entry in ipairs(chars) do
+        local char = entry.data
+        local row  = CreateFrame("Frame", nil, scrollChild)
+        row:SetHeight(ROW_H)
+        row:SetPoint("TOPLEFT",  scrollChild, "TOPLEFT",  0,   yOff)
+        row:SetPoint("TOPRIGHT", scrollChild, "TOPRIGHT", -20, yOff)
+
+        -- Zebra stripe
+        if i % 2 == 0 then
+            local bg = row:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetColorTexture(0.10, 0.08, 0.16, 0.4)
         end
 
-        if hasAny then
-            -- Expansion section header
-            local expFS = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            expFS:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4, yOff)
-            expFS:SetText("|cffA78BFA" .. exp.label .. "|r")
-            yOff = yOff - ROW_H
+        -- Class color bar
+        local classHex = CLASS_COLORS[char.class] or "888888"
+        local r = tonumber(classHex:sub(1,2), 16) / 255
+        local g = tonumber(classHex:sub(3,4), 16) / 255
+        local b = tonumber(classHex:sub(5,6), 16) / 255
+        local bar = row:CreateTexture(nil, "ARTWORK")
+        bar:SetWidth(3)
+        bar:SetPoint("TOPLEFT",    row, "TOPLEFT",    1, -2)
+        bar:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 1,  2)
+        bar:SetColorTexture(r, g, b, 1)
 
-            for _, id in ipairs(exp.ids) do
-                local info = C_CurrencyInfo.GetCurrencyInfo(id)
-                if info then
-                    -- Check account-wide flag from any char's snapshot
-                    local isAccountWide = false
-                    for _, entry in ipairs(chars) do
-                        local c = entry.data.currencies and entry.data.currencies[id]
-                        if c and c.isAccountWide then isAccountWide = true; break end
-                    end
+        -- Faction icon
+        local fTex = row:CreateTexture(nil, "ARTWORK")
+        fTex:SetSize(16, 16)
+        fTex:SetPoint("LEFT", row, "LEFT", COL_FACTION, 0)
+        local fIcon = FACTION_ICONS[char.faction]
+        if fIcon then fTex:SetTexture(fIcon) end
 
-                    -- Icon
-                    local iconTex = scrollChild:CreateTexture(nil, "ARTWORK")
-                    iconTex:SetSize(14, 14)
-                    iconTex:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 8, yOff - 3)
-                    if info.iconFileID then
-                        iconTex:SetTexture(info.iconFileID)
-                        iconTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-                    end
+        -- Name (no realm, class colored)
+        local nameFS = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        nameFS:SetPoint("LEFT", row, "LEFT", COL_NAME, 0)
+        nameFS:SetWidth(COL_LVL - COL_NAME - 10)
+        nameFS:SetJustifyH("LEFT")
+        nameFS:SetText(string.format("|cff%s%s|r", classHex, char.name or "?"))
 
-                    local currLabel = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                    currLabel:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 26, yOff)
-                    currLabel:SetText(isAccountWide
-                        and (info.name .. " |cff888888(Account)|r")
-                        or info.name)
-                    currLabel:SetWidth(COL_W - 4)
+        -- Level
+        local lvlFS = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        lvlFS:SetPoint("LEFT", row, "LEFT", COL_LVL, 0)
+        lvlFS:SetText(tostring(char.level or 0))
 
-                    if isAccountWide then
-                        local total, cap = 0, 0
-                        for _, entry in ipairs(chars) do
-                            local c = entry.data.currencies and entry.data.currencies[id]
-                            if c then total = math.max(total, c.amount); cap = c.cap end
-                        end
-                        local fs = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                        fs:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", COL_W, yOff)
-                        fs:SetWidth(COL_W * #chars)
-                        fs:SetText(cap > 0 and total >= cap
-                            and string.format("|cffFF4444%d|r / %d", total, cap)
-                            or (cap > 0
-                                and string.format("%d / |cff888888%d|r", total, cap)
-                                or tostring(total)))
-                    else
-                        for i, entry in ipairs(chars) do
-                            local c   = entry.data.currencies and entry.data.currencies[id]
-                            local val = c and c.amount or 0
-                            local cap = c and c.cap   or 0
-                            local fs  = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                            fs:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", COL_W * i, yOff)
-                            fs:SetWidth(COL_W - 4)
-                            if val == 0 then
-                                fs:SetText("|cff444444—|r")
-                            elseif cap > 0 and val >= cap then
-                                fs:SetText(string.format("|cffFF4444%d|r", val))
-                            else
-                                fs:SetText(cap > 0
-                                    and string.format("%d/|cff888888%d|r", val, cap)
-                                    or tostring(val))
-                            end
-                        end
-                    end
-
-                    yOff = yOff - ROW_H
-                end
+        -- Currency amounts
+        for ci, curr in ipairs(list) do
+            local x   = colStart + (ci - 1) * colW
+            local c   = char.currencies and char.currencies[curr.id]
+            local val = c and c.amount or 0
+            local fs  = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            fs:SetPoint("LEFT", row, "LEFT", x, 0)
+            fs:SetWidth(colW)
+            fs:SetJustifyH("CENTER")
+            if val == 0 then
+                fs:SetText("|cff444444—|r")
+            else
+                fs:SetText(tostring(val))
             end
-
-            yOff = yOff - 6
         end
+
+        yOff = yOff - ROW_H
     end
 
     scrollChild:SetHeight(math.max(CONTENT_HEIGHT, math.abs(yOff) + 20))
+end
+
+local function BuildMidnightCurrenciesPanel()
+    BuildCurrencyPanel(DAWNCREST_CRESTS)
+end
+
+local function BuildMiscCurrenciesPanel()
+    BuildCurrencyPanel(MISC_CURRENCIES, 210, 100)
+end
+
+local function BuildPvPCurrenciesPanel()
+    BuildCurrencyPanel(PVP_CURRENCIES, 210, 100)
 end
 
 -- ============================================================
@@ -1292,11 +1361,14 @@ end
 -- ============================================================
 
 local panelBuilders = {
-    characters  = BuildCharacterSummaryPanel,
-    professions = BuildProfessionsPanel,
-    currencies  = BuildCurrenciesPanel,
-    inventory   = BuildInventoryPanel,
-    settings    = BuildSettingsPanel,
+    characters           = BuildCharacterSummaryPanel,
+    professions          = BuildProfessionsPanel,
+    currencies           = BuildCurrenciesPanel,
+    currencies_midnight  = BuildMidnightCurrenciesPanel,
+    currencies_misc      = BuildMiscCurrenciesPanel,
+    currencies_pvp       = BuildPvPCurrenciesPanel,
+    inventory            = BuildInventoryPanel,
+    settings             = BuildSettingsPanel,
 }
 
 function NW.ShowPanel(id)

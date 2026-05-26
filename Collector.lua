@@ -1,33 +1,10 @@
 -- ============================================================
 -- Addon   : Nightwatch
 -- File    : Collector.lua
--- Version : 2026.05.24
+-- Version : 2026.05.26
 -- Desc    : Per-character data snapshot — inventory, bank, currencies, professions
 -- ============================================================
 local addonName, NW = ...
-
--- ============================================================
--- Currency list
--- ============================================================
-
--- Curated list of tracked currency IDs.
-local TRACKED_CURRENCIES = {
-    -- Crests (Season 1 / TWW)
-    [3008] = "Weathered Crest",
-    [3009] = "Carved Crest",
-    [3010] = "Runed Crest",
-    [3011] = "Gilded Crest",
-    -- Resonance Crystals
-    [3056] = "Resonance Crystals",
-    -- Valorstone
-    [3028] = "Valorstone",
-    -- Conquest
-    [1602] = "Conquest",
-    -- Honor
-    [1792] = "Honor",
-    -- Flightstone (legacy / carry-over)
-    [2707] = "Flightstone",
-}
 
 -- Explicit bag ID tables — safer than arithmetic offset if enum values change
 local CHAR_BANK_BAGS = {
@@ -95,16 +72,18 @@ local function SnapshotCharacterInfo(entry)
     entry.restedXP    = math.floor((restedXP / maxXP) * 100)
 end
 
---- Collects all currencies from TRACKED_CURRENCIES.
+--- Scans the full currency list and snapshots all currencies with quantity > 0.
+--- No hardcoded IDs — automatically captures current and future currencies.
 local function SnapshotCurrencies(entry)
     entry.currencies = {}
-    for id in pairs(TRACKED_CURRENCIES) do
-        local info = C_CurrencyInfo.GetCurrencyInfo(id)
-        if info and info.quantity > 0 then
-            entry.currencies[id] = {
-                amount               = info.quantity,
-                cap                  = info.maxQuantity,
-                isAccountWide        = info.isAccountWide or false,
+    local listSize = C_CurrencyInfo.GetCurrencyListSize()
+    for i = 1, listSize do
+        local info = C_CurrencyInfo.GetCurrencyListInfo(i)
+        if info and not info.isHeader and info.currencyID and info.quantity > 0 then
+            entry.currencies[info.currencyID] = {
+                amount                = info.quantity,
+                cap                   = info.maxQuantity or 0,
+                isAccountWide         = info.isAccountWide or false,
                 isAccountTransferable = info.isAccountTransferable or false,
             }
         end
@@ -303,6 +282,7 @@ eventFrame:RegisterEvent("PLAYER_MONEY")
 eventFrame:RegisterEvent("BAG_UPDATE")
 eventFrame:RegisterEvent("SKILL_LINES_CHANGED")
 eventFrame:RegisterEvent("TRADE_SKILL_SHOW")
+eventFrame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
 
 local profRefreshPending = false
 local bagScanPending     = false
@@ -372,6 +352,15 @@ eventFrame:SetScript("OnEvent", function(_, event)
                 if NW.RefreshUI then NW.RefreshUI() end
                 bagScanPending = false
             end)
+        end
+
+    elseif event == "CURRENCY_DISPLAY_UPDATE" then
+        if not NW.db then return end
+        local key   = GetCharKey()
+        local entry = NW.db.characters[key]
+        if entry then
+            SnapshotCurrencies(entry)
+            if NW.RefreshUI then NW.RefreshUI() end
         end
     end
 end)

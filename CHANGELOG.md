@@ -1,5 +1,25 @@
 # Nightwatch — Changelog
 
+## [2026.05.26] — Alpha
+
+### Fixed
+- **Config → Settings** — Font size slider no longer crashes on repeated Settings panel visits; lazy-init via `EnsureFontSizeSlider` with unnamed frame
+- **Config → Settings** — Font dropdown list now reserves full list height below the button so font size slider is never overlapped
+- **Config → Bottom bar** — Total Gold now correctly reflects the active realm filter (`All Realms` / `This Realm`)
+- **Config → Character Summary** — Removed duplicate character count label from panel header (count shown in bottom bar only)
+- **Config → Profession Skills tooltip** — Expansion sort order now uses explicit priority table (Midnight → Khaz Algar → Dragon Isles → … → Classic) instead of unreliable skillLine ID ordering
+
+### Changed
+- **Config → Nav sidebar** — Arrow symbols removed from parent nav buttons
+- **Config → Nav sidebar** — Parent nav items styled gold (`FFD200`), child items white; AuctionHouse atlas textures (`auctionhouse-nav-button`, `auctionhouse-nav-button-secondary`) used for background and selection states
+- **Config → Nav sidebar** — All label, header, and bottom bar text brightened for legibility
+- **Config → Currencies** — Rebuilt entirely: nav now has `Midnight`, `Miscellaneous`, and `PvP` children; each loads a dedicated panel
+- **Config → Currencies → Midnight** — Dawncrest crest panel: faction icon, class color bar, Name, Lvl, then one icon column per crest tier (Adventurer → Veteran → Champion → Hero → Myth). No cap display (cap removed by Blizzard). Column icons and amounts centered within each column.
+- **Config → Currencies → Miscellaneous** — Trader's Tender, Timewarped Badge. Same row layout as Midnight panel.
+- **Config → Currencies → PvP** — Honor, Conquest. Same row layout as Midnight panel.
+- **Collector** — Currency snapshot replaced: static `TRACKED_CURRENCIES` table removed; now performs a full dynamic scan via `C_CurrencyInfo.GetCurrencyListSize()` + `C_CurrencyInfo.GetCurrencyListInfo(index)`. Captures all current and future currencies automatically with no maintenance.
+- **Collector** — Added `CURRENCY_DISPLAY_UPDATE` event handler to re-snapshot currencies immediately when any currency amount changes in-game
+
 ## [2026.05.24] — Alpha
 
 ### Added
