@@ -1,7 +1,7 @@
 -- ============================================================
 -- Addon   : Nightwatch
 -- File    : Config.lua
--- Version : 2026.05.26
+-- Version : 2026.06.01
 -- Desc    : Main UI — expandable nav, panels, status bar
 -- ============================================================
 local addonName, NW = ...
@@ -1111,20 +1111,22 @@ local function BuildInventoryPanel()
                         end
                     end
                 end
-                if char.warbank then
-                    for itemID, tabCounts in pairs(char.warbank) do
-                        local name = C_Item.GetItemInfo(itemID) or ""
-                        if name:lower():find(query, 1, true) then
-                            for bagID, count in pairs(tabCounts) do
-                                local tabName = (char.warbankTabs and char.warbankTabs[bagID])
-                                    or ("Tab " .. (bagID - 11))
-                                table.insert(rows, {
-                                    charName = char.name, class = char.class,
-                                    source = "Warbank: " .. tabName,
-                                    itemID = itemID, itemName = name, count = count,
-                                })
-                            end
-                        end
+            end
+        end
+
+        -- Warbank is account-level — search once outside the character loop
+        if NW.db.warbank then
+            for itemID, tabCounts in pairs(NW.db.warbank) do
+                local name = C_Item.GetItemInfo(itemID) or ""
+                if name:lower():find(query, 1, true) then
+                    for bagID, count in pairs(tabCounts) do
+                        local tabName = (NW.db.warbankTabs and NW.db.warbankTabs[bagID])
+                            or ("Tab " .. (bagID - 11))
+                        table.insert(rows, {
+                            charName = "Warbank", class = "",
+                            source   = "Warbank: " .. tabName,
+                            itemID   = itemID, itemName = name, count = count,
+                        })
                     end
                 end
             end
@@ -1300,11 +1302,12 @@ local function BuildSettingsPanel()
     modLabel:SetText("Hold key when hovering an item to see counts:")
     yOff = yOff - 20
 
-    local modKeys = { "ALT", "CTRL", "SHIFT" }
+    local modKeys = { "ALT", "CTRL", "SHIFT", "NONE" }
+    local modOffsets = { ALT = 0, CTRL = 70, SHIFT = 140, NONE = 220 }
     for _, key in ipairs(modKeys) do
         local rb = CreateFrame("CheckButton", nil, scrollChild, "UIRadioButtonTemplate")
         rb:SetSize(20, 20)
-        rb:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4 + (key == "ALT" and 0 or key == "CTRL" and 70 or 140), yOff)
+        rb:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4 + modOffsets[key], yOff)
         rb:SetChecked(NW.db.settings.tooltipModifier == key)
         local lbl = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         lbl:SetPoint("LEFT", rb, "RIGHT", 2, 0)

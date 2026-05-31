@@ -2,7 +2,7 @@
 ## Title: Nightwatch
 ## Notes: All your alts, under one moon
 ## Author: Odysseus68
-## Version: 2026.05.26
+## Version: 2026.06.01
 ## SavedVariables: NightwatchDB
 ## IconTexture: Interface\AddOns\Nightwatch\Media\icon\Minimap.tga
 ## AddonCompartmentFunc: Nightwatch_OnAddonCompartmentClick

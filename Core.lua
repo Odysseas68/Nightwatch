@@ -1,7 +1,7 @@
 -- ============================================================
 -- Addon   : Nightwatch
 -- File    : Core.lua
--- Version : 2026.05.24
+-- Version : 2026.06.01
 -- Desc    : Namespace, DB init, login callbacks, slash commands
 -- ============================================================
 local addonName, NW = ...
@@ -13,23 +13,22 @@ local addonName, NW = ...
 NW.VERSION = "0.1.0"
 
 local DB_DEFAULTS = {
-    characters = {},
+    characters  = {},
+    warbank     = {},   -- account-wide: { [itemID] = { [bagID] = count } }
+    warbankTabs = {},   -- account-wide: { [bagID] = "Tab Name" }
+    guildbanks  = {},   -- per-guild: { ["GuildName-Realm"] = { items={}, tabs={} } }
     settings = {
-        showAllRealms  = true,
-        theme          = "midnight",
-        font           = nil,
-        fontSize       = 12,
-        minimapButton  = {
-            show     = true,
-            angle    = 45,
+        showAllRealms   = true,
+        theme           = "midnight",
+        font            = nil,
+        fontSize        = 12,
+        minimapButton   = {
+            show  = true,
+            angle = 45,
         },
-        hiddenChars       = {},
-        tooltipModifier   = "ALT",   -- modifier key to show tooltip counts: ALT / CTRL / SHIFT
-        trackedCurrencies = {
-            [3008] = true, [3009] = true, [3010] = true, [3011] = true,
-            [3056] = true, [3028] = true, [1602] = true, [1792] = true,
-            [2707] = true,
-        },
+        hiddenChars     = {},
+        navExpanded     = {},
+        tooltipModifier = "ALT",
     },
 }
 
@@ -82,6 +81,30 @@ local function InitDB()
         ApplyDefaults(NightwatchDB.settings, DB_DEFAULTS.settings)
     end
     ApplyDefaults(NightwatchDB.settings.minimapButton, DB_DEFAULTS.settings.minimapButton)
+
+    -- Remove stale settings keys
+    NightwatchDB.settings.trackedCurrencies = nil
+
+    -- Migrate warbank data from character entries to account level
+    -- Only runs once — if NightwatchDB.warbank is already populated skip
+    if not next(NightwatchDB.warbank) then
+        local bestTime = 0
+        for _, char in pairs(NightwatchDB.characters) do
+            local lastSeen = char.lastSeen or 0
+            if lastSeen > bestTime and char.warbank and next(char.warbank) then
+                bestTime = lastSeen
+                NightwatchDB.warbank     = CopyTable(char.warbank)
+                NightwatchDB.warbankTabs = CopyTable(char.warbankTabs or {})
+            end
+        end
+    end
+
+    -- Clear per-character warbank data — no longer stored here
+    for _, char in pairs(NightwatchDB.characters) do
+        char.warbank     = nil
+        char.warbankTabs = nil
+    end
+
     NW.db = NightwatchDB
 end
 

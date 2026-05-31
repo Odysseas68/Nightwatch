@@ -1,7 +1,7 @@
 -- ============================================================
 -- Addon   : Nightwatch
 -- File    : Collector.lua
--- Version : 2026.05.26
+-- Version : 2026.06.01
 -- Desc    : Per-character data snapshot — inventory, bank, currencies, professions
 -- ============================================================
 local addonName, NW = ...
@@ -17,6 +17,17 @@ local ACCOUNT_BANK_BAGS = {
     Enum.BagIndex.AccountBankTab_3, Enum.BagIndex.AccountBankTab_4,
     Enum.BagIndex.AccountBankTab_5,
 }
+-- Fast lookup set for warbank bag IDs — used to detect warbank BAG_UPDATE events
+local WARBANK_BAG_SET = {}
+for _, bagID in ipairs(ACCOUNT_BANK_BAGS) do
+    WARBANK_BAG_SET[bagID] = true
+end
+-- Fast lookup set for character bank bag IDs — used to detect bank BAG_UPDATE events
+local CHARBANK_BAG_SET = {}
+for _, bagID in ipairs(CHAR_BANK_BAGS) do
+    CHARBANK_BAG_SET[bagID] = true
+end
+local MAX_GUILDBANK_SLOTS = 98   -- slots per guild bank tab (matches Blizzard source)
 
 -- ============================================================
 -- Helpers
@@ -43,8 +54,6 @@ local function NewCharEntry(name, realm)
         currencies  = {},
         inventory   = {},
         bank        = {},
-        warbank     = {},
-        warbankTabs = {},
         reagentbag  = {},
         faction     = "",
         restedXP    = 0,
@@ -216,15 +225,15 @@ local function SnapshotBank(entry)
     end
 end
 
---- Scans warbank tabs and stores counts per-tab with tab names.
-local function SnapshotWarbank(entry)
-    entry.warbank     = {}
-    entry.warbankTabs = {}
+--- Scans warbank tabs and writes to account-level NW.db.warbank/warbankTabs.
+local function SnapshotWarbank()
+    NW.db.warbank     = {}
+    NW.db.warbankTabs = {}
 
     -- Fetch tab metadata for names (only available while bank is open)
     local tabData = C_Bank.FetchPurchasedBankTabData(Enum.BankType.Account) or {}
     for _, tab in ipairs(tabData) do
-        entry.warbankTabs[tab.ID] = tab.name
+        NW.db.warbankTabs[tab.ID] = tab.name
     end
 
     local tabCount = C_Bank.FetchNumPurchasedBankTabs(Enum.BankType.Account) or 0
@@ -236,12 +245,46 @@ local function SnapshotWarbank(entry)
                 local info = C_Container.GetContainerItemInfo(bagID, slot)
                 if info and info.itemID then
                     local id = info.itemID
-                    if not entry.warbank[id] then entry.warbank[id] = {} end
-                    entry.warbank[id][bagID] = (entry.warbank[id][bagID] or 0) + info.stackCount
+                    if not NW.db.warbank[id] then NW.db.warbank[id] = {} end
+                    NW.db.warbank[id][bagID] = (NW.db.warbank[id][bagID] or 0) + info.stackCount
                 end
             end
         end
     end
+end
+
+--- Scans all viewable guild bank tabs and writes to NW.db.guildbanks.
+--- Only callable while guild bank frame is open.
+local function SnapshotGuildBank()
+    if not IsInGuild() then return end
+    local guildName = GetGuildInfo("player")
+    if not guildName then return end
+    local key = guildName .. "-" .. GetRealmName()
+
+    NW.db.guildbanks[key] = { items = {}, tabs = {} }
+    local entry = NW.db.guildbanks[key]
+
+    local numTabs = GetNumGuildBankTabs()
+    for tab = 1, numTabs do
+        local name, _, isViewable = GetGuildBankTabInfo(tab)
+        if isViewable and name then
+            entry.tabs[tab] = name
+            for slot = 1, MAX_GUILDBANK_SLOTS do
+                local itemLink = GetGuildBankItemLink(tab, slot)
+                if itemLink then
+                    local itemID = C_Item.GetItemInfoInstant(itemLink)
+                    if itemID then
+                        local _, count = GetGuildBankItemInfo(tab, slot)
+                        count = count or 1
+                        if not entry.items[itemID] then entry.items[itemID] = {} end
+                        entry.items[itemID][tab] = (entry.items[itemID][tab] or 0) + count
+                    end
+                end
+            end
+        end
+    end
+    NW.LogDebug("Collector", "Guild bank snapshot: " .. key .. " (" .. numTabs .. " tabs)")
+    if NW.RefreshUI then NW.RefreshUI() end
 end
 
 -- ============================================================
@@ -283,9 +326,14 @@ eventFrame:RegisterEvent("BAG_UPDATE")
 eventFrame:RegisterEvent("SKILL_LINES_CHANGED")
 eventFrame:RegisterEvent("TRADE_SKILL_SHOW")
 eventFrame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
+eventFrame:RegisterEvent("GUILDBANKFRAME_OPENED")
+eventFrame:RegisterEvent("GUILDBANKBAGSLOTS_CHANGED")
 
-local profRefreshPending = false
-local bagScanPending     = false
+local profRefreshPending   = false
+local bagScanPending       = false
+local warbankScanPending   = false
+local bankScanPending      = false
+local guildbankScanPending = false
 
 local function ScheduleProfRefresh(entry, source)
     if profRefreshPending then return end
@@ -299,16 +347,33 @@ local function ScheduleProfRefresh(entry, source)
     end)
 end
 
-eventFrame:SetScript("OnEvent", function(_, event)
+eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "BANKFRAME_OPENED" then
         if not NW.db then return end
         local key   = GetCharKey()
         local entry = NW.db.characters[key]
         if not entry then return end
-        SnapshotBank(entry)
-        SnapshotWarbank(entry)
-        NW.LogDebug("Collector", "Bank + Warbank snapshot for " .. key)
-        if NW.RefreshUI then NW.RefreshUI() end
+        -- Delay scan — tab contents load asynchronously after frame opens
+        C_Timer.After(0.5, function()
+            if not NW.db then return end
+            SnapshotBank(entry)
+            -- Use FetchViewableBankTypes to detect if warbank is actually open
+            local viewable = C_Bank.FetchViewableBankTypes() or {}
+            local warbankViewable = false
+            for _, bankType in ipairs(viewable) do
+                if bankType == Enum.BankType.Account then
+                    warbankViewable = true
+                    break
+                end
+            end
+            if warbankViewable then
+                SnapshotWarbank()
+                NW.LogDebug("Collector", "Bank + Warbank snapshot for " .. key)
+            else
+                NW.LogDebug("Collector", "Bank snapshot for " .. key .. " (warbank not viewable)")
+            end
+            if NW.RefreshUI then NW.RefreshUI() end
+        end)
 
     elseif event == "PLAYER_MONEY" then
         if not NW.db then return end
@@ -342,7 +407,33 @@ eventFrame:SetScript("OnEvent", function(_, event)
 
     elseif event == "BAG_UPDATE" then
         if not NW.db then return end
-        if not bagScanPending then
+        local bagID = ...   -- BAG_UPDATE passes the updated bag ID
+        if bagID and WARBANK_BAG_SET[bagID] then
+            -- Only re-scan warbank if bank frame is actually open
+            -- BAG_UPDATE fires for warbank IDs at login even when bank isn't open
+            if not warbankScanPending and C_Bank.AreAnyBankTypesViewable() then
+                warbankScanPending = true
+                C_Timer.After(0.5, function()
+                    if not NW.db then return end
+                    SnapshotWarbank()
+                    if NW.RefreshUI then NW.RefreshUI() end
+                    warbankScanPending = false
+                end)
+            end
+        elseif bagID and CHARBANK_BAG_SET[bagID] then
+            -- Character bank tab changed — re-scan bank
+            if not bankScanPending then
+                bankScanPending = true
+                C_Timer.After(0.5, function()
+                    if not NW.db then return end
+                    local key   = GetCharKey()
+                    local entry = NW.db.characters[key]
+                    if entry then SnapshotBank(entry) end
+                    if NW.RefreshUI then NW.RefreshUI() end
+                    bankScanPending = false
+                end)
+            end
+        elseif not bagScanPending then
             bagScanPending = true
             C_Timer.After(1.5, function()
                 if not NW.db then return end
@@ -361,6 +452,25 @@ eventFrame:SetScript("OnEvent", function(_, event)
         if entry then
             SnapshotCurrencies(entry)
             if NW.RefreshUI then NW.RefreshUI() end
+        end
+
+    elseif event == "GUILDBANKFRAME_OPENED" then
+        if not NW.db then return end
+        -- Delay scan — guild bank tab contents load asynchronously
+        C_Timer.After(0.5, function()
+            if not NW.db then return end
+            SnapshotGuildBank()
+        end)
+
+    elseif event == "GUILDBANKBAGSLOTS_CHANGED" then
+        if not NW.db then return end
+        if not guildbankScanPending then
+            guildbankScanPending = true
+            C_Timer.After(0.5, function()
+                if not NW.db then return end
+                SnapshotGuildBank()
+                guildbankScanPending = false
+            end)
         end
     end
 end)

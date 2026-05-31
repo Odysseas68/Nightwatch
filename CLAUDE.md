@@ -43,11 +43,13 @@ NightwatchDB = {
             inventory    = {},             -- bags 0-4, itemID = count
             reagentbag   = {},             -- bag 5 only, itemID = count
             bank         = {},             -- character bank tabs, itemID = count
-            warbank      = {},             -- { [itemID] = { [bagID] = count } }
-            warbankTabs  = {},             -- { [bagID] = "Tab Name" } — persisted from last bank open
+            -- warbank and warbankTabs moved to account level (see below)
             professions  = {},             -- { [parentSkillLine] = { name, icon, skillLevel, maxSkillLevel, isPrimary, enumProfession, totalSkill, totalMaxSkill, expansions={} } }
         }
     },
+    warbank     = {},              -- account-wide: { [itemID] = { [bagID] = count } }
+    warbankTabs = {},              -- account-wide: { [bagID] = "Tab Name" } — updated on BANKFRAME_OPENED
+    guildbanks  = {},              -- per-guild: { ["GuildName-Realm"] = { items={[itemID]={[tabIndex]=count}}, tabs={[tabIndex]="Tab Name"} } }
     settings = {
         showAllRealms  = true,
         theme          = "midnight",
@@ -86,7 +88,9 @@ NightwatchDB = {
 
 **Bag scanning:** Bags 0-4 → `entry.inventory`. Bag 5 (reagent bag, `Enum.BagIndex.ReagentBag`) → `entry.reagentbag`. Always scan separately. `BAG_UPDATE` is debounced at 1.5s via `C_Timer.After` — this is intentional, do not remove or add a combat gate.
 
-**Warbank:** Account-wide — stored per-character in the DB (whichever character last opened the bank), but displayed only once in tooltip and UI. Never sum warbank counts across characters. Structure is `warbank[itemID][bagID] = count` and `warbankTabs[bagID] = "Tab Name"`. Tab names fetched via `C_Bank.FetchPurchasedBankTabData(Enum.BankType.Account)` — only available while bank frame is open.
+**Warbank:** Account-wide — stored at `NW.db.warbank` and `NW.db.warbankTabs` (top-level, not per-character). Never store warbank data under character entries. Structure is `warbank[itemID][bagID] = count` and `warbankTabs[bagID] = "Tab Name"`. Scanned on `BANKFRAME_OPENED` using `C_Bank.FetchViewableBankTypes()` to confirm warbank is actually open (not guild bank). `BAG_UPDATE` for warbank bag IDs is gated with `C_Bank.AreAnyBankTypesViewable()` — WoW fires `BAG_UPDATE` for warbank IDs at login even when bank is closed, which would wipe saved data. Tab names fetched via `C_Bank.FetchPurchasedBankTabData(Enum.BankType.Account)` — only available while bank frame is open.
+
+**Guild bank:** Per-guild — stored at `NW.db.guildbanks["GuildName-Realm"]`. Structure: `{ items = { [itemID] = { [tabIndex] = count } }, tabs = { [tabIndex] = "Tab Name" } }`. Only viewable tabs scanned (`isViewable` from `GetGuildBankTabInfo`). Scanned on `GUILDBANKFRAME_OPENED` (0.5s delay) and `GUILDBANKBAGSLOTS_CHANGED`. Use `C_Item.GetItemInfoInstant(itemLink)` to extract itemID from `GetGuildBankItemLink`. Use `GetGuildInfo("player")` for guild name — guard with `IsInGuild()` first as it can return nil on login.
 
 **Tooltip:** Hooked via `TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, fn)`. This is taint-free and combat-safe. Do NOT gate tooltip logic with `InCombatLockdown()` — it incorrectly suppresses counts during open world combat.
 
@@ -131,8 +135,12 @@ NightwatchDB = {
 - `CURRENCY_DISPLAY_UPDATE` — fires whenever any currency amount changes. Use to re-snapshot currencies in real time. Safe to call `SnapshotCurrencies` directly in the handler (no debounce needed — it's a lightweight list scan).
 - Currency snapshot is fully dynamic — no hardcoded ID list. `SnapshotCurrencies` scans the full currency list and stores all with `quantity > 0`. The display panels (Config.lua) define which IDs to show and where.
 - `C_Bank.GetBankTabInfo` does not exist — use `C_Bank.FetchPurchasedBankTabData(Enum.BankType.Account)`
+- Guild bank globals (still valid in 12.0+): `GetNumGuildBankTabs()`, `GetGuildBankTabInfo(tab)` returns `name, icon, isViewable, canDeposit, ...`, `GetGuildBankItemInfo(tab, slot)` returns `texture, count, locked`, `GetGuildBankItemLink(tab, slot)`. Use `C_Item.GetItemInfoInstant(itemLink)` to extract itemID. `MAX_GUILDBANK_SLOTS_PER_TAB = 98` (confirmed from Blizzard source). `GUILDBANKFRAME_OPENED` and `GUILDBANKBAGSLOTS_CHANGED` are the correct events.
+- `GetGuildInfo("player")` returns `guildName, rankName, rankIndex, realm` — can return nil on login even if in guild; always guard with `IsInGuild()` first
 - `C_Bank.FetchPurchasedBankTabData` returns `{ [i] = { ID, name, icon, bankType, depositFlags, ... } }`
 - `ID` in tab data matches `Enum.BagIndex` values (12-16 for warbank) — use as the key for `warbankTabs`
+- `C_Bank.FetchViewableBankTypes()` — returns array of `Enum.BankType` values currently viewable. Use to detect if warbank vs guild bank is open on `BANKFRAME_OPENED`.
+- `C_Bank.AreAnyBankTypesViewable()` — returns true if any bank frame is currently open. Use to guard `BAG_UPDATE` warbank rescans against login false positives.
 - Full `C_Bank` function list (12.0): FetchNumPurchasedBankTabs, FetchPurchasedBankTabData, FetchPurchasedBankTabIDs, FetchNextPurchasableBankTabData, FetchDepositedMoney, FetchBankLockedReason, FetchViewableBankTypes, CanUseBank, CanViewBank, CanDepositMoney, CanWithdrawMoney, WithdrawMoney, DepositMoney, PurchaseBankTab, HasMaxBankTabs, IsItemAllowedInBankType, AreAnyBankTypesViewable, DoesBankTypeSupportMoneyTransfer, DoesBankTypeSupportAutoDeposit, AutoDepositItemsIntoBank, UpdateBankTabSettings, CloseBankFrame
 
 ---
@@ -147,8 +155,9 @@ NightwatchDB = {
 - Minimal comments only — never narrate what code is doing; only comment *why* when genuinely non-obvious; section headers encouraged; short one-line description on functions, helpers, tables, and constants
 - Never use `InCombatLockdown()` to gate tooltip or bag scan logic
 - Never use arithmetic offsets on `Enum.BagIndex` values — always use explicit lookup tables
-- Never sum warbank counts across multiple characters — it is account-wide data
+- Warbank is account-wide — always read/write from `NW.db.warbank` and `NW.db.warbankTabs`, never from character entries
 - warbank DB structure is `warbank[itemID][bagID] = count` — never flatten to `warbank[itemID] = count`
+- Guild bank is per-guild — stored at `NW.db.guildbanks["GuildName-Realm"]`; never store under character entries
 - **No `goto` or `::label::` syntax** — WoW uses Lua 5.1 which does not support these; use nested `if` guards instead
 - `GetXPExhaustion()` is valid in Retail 12.0+ — returns rested XP or `nil` when not rested; always use safe pattern: `(GetXPExhaustion and GetXPExhaustion()) or 0`. `C_XP` namespace does not exist.
 - All files must have a standard header comment block: `-- Addon : Nightwatch / -- File : FileName.lua / -- Version : YYYY.MM.DD / -- Desc : brief description`

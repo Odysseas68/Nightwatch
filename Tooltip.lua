@@ -10,46 +10,69 @@ local _, NW = ...
 -- Item lookup
 -- ============================================================
 
---- Returns per-character counts and warbank breakdown by tab.
+--- Returns per-character counts and warbank breakdown from account-level DB.
 local function GetItemCounts(itemID)
-    local chars          = {}
-    local warbankTabs    = {}
-    local warbankTotal   = 0
-    local warbankCounted = false
+    local chars        = {}
+    local warbankTabs  = {}
+    local warbankTotal = 0
 
+    -- Per-character bags/reagentbag/bank
     for key, char in pairs(NW.db.characters) do
-        if not NW.db.settings.hiddenChars[key] then
-            local bags    = (char.inventory  and char.inventory[itemID])  or 0
-            local reagent = (char.reagentbag and char.reagentbag[itemID]) or 0
-            local bank    = (char.bank       and char.bank[itemID])       or 0
+        local bags    = (char.inventory  and char.inventory[itemID])  or 0
+        local reagent = (char.reagentbag and char.reagentbag[itemID]) or 0
+        local bank    = (char.bank       and char.bank[itemID])       or 0
+        if bags + reagent + bank > 0 then
+            chars[#chars + 1] = {
+                name    = char.name  or key,
+                class   = char.class or "",
+                bags    = bags,
+                reagent = reagent,
+                bank    = bank,
+                total   = bags + reagent + bank,
+            }
+        end
+    end
 
-            -- Warbank is account-wide — only read once
-            if not warbankCounted and char.warbank and char.warbank[itemID] then
-                local tabCounts = char.warbank[itemID]
-                for bagID, count in pairs(tabCounts) do
-                    local name = (char.warbankTabs and char.warbankTabs[bagID])
-                        or ("Tab " .. (bagID - 11))
-                    warbankTabs[#warbankTabs + 1] = { name = name, count = count }
-                    warbankTotal = warbankTotal + count
+    -- Account-level warbank — single source of truth
+    local wb = NW.db.warbank and NW.db.warbank[itemID]
+    if wb then
+        for bagID, count in pairs(wb) do
+            local name = (NW.db.warbankTabs and NW.db.warbankTabs[bagID])
+                or ("Tab " .. (bagID - 11))
+            warbankTabs[#warbankTabs + 1] = { name = name, count = count }
+            warbankTotal = warbankTotal + count
+        end
+    end
+
+    -- Guild banks — per guild, keyed by "GuildName-Realm"
+    local guildbanks = {}
+    if NW.db.guildbanks then
+        for guildKey, guildData in pairs(NW.db.guildbanks) do
+            local gbItems = guildData.items and guildData.items[itemID]
+            if gbItems then
+                local tabs  = {}
+                local total = 0
+                for tabIndex, count in pairs(gbItems) do
+                    local tabName = (guildData.tabs and guildData.tabs[tabIndex])
+                        or ("Tab " .. tabIndex)
+                    tabs[#tabs + 1] = { name = tabName, count = count }
+                    total = total + count
                 end
-                warbankCounted = true
-            end
-
-            if bags + reagent + bank > 0 then
-                chars[#chars + 1] = {
-                    name    = char.name  or key,
-                    class   = char.class or "",
-                    bags    = bags,
-                    reagent = reagent,
-                    bank    = bank,
-                    total   = bags + reagent + bank,
+                table.sort(tabs, function(a, b) return a.name < b.name end)
+                -- strip realm from key for display
+                local displayName = guildKey:match("^(.-)%-") or guildKey
+                guildbanks[#guildbanks + 1] = {
+                    name  = displayName,
+                    tabs  = tabs,
+                    total = total,
                 }
             end
         end
     end
+
     table.sort(chars, function(a, b) return a.name < b.name end)
     table.sort(warbankTabs, function(a, b) return a.name < b.name end)
-    return chars, warbankTabs, warbankTotal
+    return chars, warbankTabs, warbankTotal, guildbanks
 end
 
 -- ============================================================
@@ -78,15 +101,16 @@ local function OnItemTooltip(tooltip, data)
 
     -- Respect modifier key setting (default: Alt)
     local mod = NW.db.settings.tooltipModifier or "ALT"
-    if mod == "ALT"   and not IsAltKeyDown()   then return end
+    if mod == "ALT"   and not IsAltKeyDown()    then return end
     if mod == "CTRL"  and not IsControlKeyDown() then return end
     if mod == "SHIFT" and not IsShiftKeyDown()   then return end
+    -- NONE = always show, no gate needed
 
     local itemID = data and data.id
     if not itemID then return end
 
-    local results, warbankTabs, warbankTotal = GetItemCounts(itemID)
-    if #results == 0 and warbankTotal == 0 then return end
+    local results, warbankTabs, warbankTotal, guildbanks = GetItemCounts(itemID)
+    if #results == 0 and warbankTotal == 0 and #guildbanks == 0 then return end
 
     tooltip:AddLine(" ")
     tooltip:AddLine("|cffA78BFANightwatch|r")
@@ -117,13 +141,28 @@ local function OnItemTooltip(tooltip, data)
     end
 
     if warbankTotal > 0 then
-        -- Header line with total
+        tooltip:AddLine(" ")
         tooltip:AddDoubleLine(
             "|cff67E8F9Account Warbank|r",
             "|cff4ADE80" .. warbankTotal .. "|r"
         )
         -- Per-tab breakdown
         for _, tab in ipairs(warbankTabs) do
+            tooltip:AddDoubleLine(
+                "  |cffE2E8F0" .. tab.name .. ":|r",
+                "|cff4ADE80" .. tab.count .. "|r"
+            )
+        end
+    end
+
+    for _, gb in ipairs(guildbanks) do
+        grandTotal = grandTotal + gb.total
+        tooltip:AddLine(" ")
+        tooltip:AddDoubleLine(
+            "|cffF6AD55Guild Bank: " .. gb.name .. "|r",
+            "|cff4ADE80" .. gb.total .. "|r"
+        )
+        for _, tab in ipairs(gb.tabs) do
             tooltip:AddDoubleLine(
                 "  |cffE2E8F0" .. tab.name .. ":|r",
                 "|cff4ADE80" .. tab.count .. "|r"
