@@ -47,7 +47,15 @@ local NAV_TREE = {
         },
     },
     { id = "inventory", label = "Inventory",  children = {} },
-    { id = "settings",  label = "Settings",   children = {} },
+    {
+        id       = "settings",
+        label    = "Settings",
+        children = {
+            { id = "settings_general", label = "General"    },
+            { id = "settings_chars",   label = "Characters" },
+            { id = "settings_guilds",  label = "Guilds"     },
+        },
+    },
 }
 
 -- Midnight Season 1 Dawncrest crests — ordered Adventurer→Myth
@@ -1071,14 +1079,68 @@ local function BuildInventoryPanel()
     ClearContent()
     ResetScrollFrame()
 
-    local searchBox = CreateFrame("EditBox", nil, scrollChild, "SearchBoxTemplate")
-    searchBox:SetSize(CONTENT_WIDTH - 40, 24)
+    local searchBox = CreateFrame("EditBox", nil, scrollChild, "BackdropTemplate")
+    searchBox:SetSize(CONTENT_WIDTH - 40, 44)
     searchBox:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4, -6)
     searchBox:SetAutoFocus(false)
+    searchBox:SetMultiLine(false)
+    searchBox:SetMaxLetters(64)
+    searchBox:SetFont("Fonts\\FRIZQT__.TTF", 14, "")
+    searchBox:SetTextInsets(10, 10, 0, 0)
+    searchBox:SetBackdrop({
+        bgFile   = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = false, edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 }
+    })
+    searchBox:SetBackdropColor(0.12, 0.09, 0.20, 0.95)
+    searchBox:SetBackdropBorderColor(0.55, 0.35, 0.85, 1.0)
+    searchBox:SetTextColor(1, 1, 1)
+    -- Placeholder text (declared before scripts that reference it)
+    local placeholder = searchBox:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    placeholder:SetPoint("LEFT", searchBox, "LEFT", 12, 0)
+    placeholder:SetFont("Fonts\\FRIZQT__.TTF", 13, "")
+    placeholder:SetTextColor(0.35, 0.30, 0.50)
+    placeholder:SetText("Search items...")
+    -- Glow border on focus
+    searchBox:SetScript("OnEditFocusGained", function()
+        searchBox:SetBackdropBorderColor(0.75, 0.50, 1.0, 1.0)
+        placeholder:Hide()
+    end)
+    searchBox:SetScript("OnEditFocusLost", function()
+        searchBox:SetBackdropBorderColor(0.55, 0.35, 0.85, 1.0)
+        if searchBox:GetText() == "" then placeholder:Show() end
+    end)
+    searchBox:SetScript("OnEscapePressed", function()
+        searchBox:SetText("")
+        searchBox:ClearFocus()
+        placeholder:Show()
+    end)
+
+    -- headers: x = column start, w = column width, centered over each column
+    local function MakeInvHdr(text, x, w)
+        local fs = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", x, -58)
+        fs:SetWidth(w)
+        fs:SetJustifyH("CENTER")
+        fs:SetTextColor(0.80, 0.80, 0.90)
+        fs:SetText(text)
+    end
+    MakeInvHdr("Item",     4,   200)
+    MakeInvHdr("Location", 210, 150)
+    MakeInvHdr("Type",     336, 160)
+    MakeInvHdr("Count",    500, 60)
+
+    -- Divider under headers
+    local divider = scrollChild:CreateTexture(nil, "ARTWORK")
+    divider:SetHeight(1)
+    divider:SetPoint("TOPLEFT",  scrollChild, "TOPLEFT",  0,  -72)
+    divider:SetPoint("TOPRIGHT", scrollChild, "TOPRIGHT", -20, -72)
+    divider:SetColorTexture(0.25, 0.20, 0.40, 0.8)
 
     local resultsParent = CreateFrame("Frame", nil, scrollChild)
     resultsParent:SetSize(CONTENT_WIDTH - 20, 20)
-    resultsParent:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -38)
+    resultsParent:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -80)
 
     local function RenderResults(query)
         for _, child in ipairs({ resultsParent:GetChildren() }) do child:Hide() end
@@ -1104,6 +1166,7 @@ local function BuildInventoryPanel()
                             if name:lower():find(query, 1, true) then
                                 table.insert(rows, {
                                     charName = char.name, class = char.class,
+                                    realm    = char.realm or "",
                                     source = src.label, itemID = itemID,
                                     itemName = name, count = count,
                                 })
@@ -1123,12 +1186,39 @@ local function BuildInventoryPanel()
                         local tabName = (NW.db.warbankTabs and NW.db.warbankTabs[bagID])
                             or ("Tab " .. (bagID - 11))
                         table.insert(rows, {
-                            charName = "Warbank", class = "",
-                            source   = "Warbank: " .. tabName,
-                            itemID   = itemID, itemName = name, count = count,
+                            charName  = "Account Warbank",
+                            charColor = "67E8F9",
+                            source    = tabName,
+                            itemID    = itemID, itemName = name, count = count,
                         })
                     end
                 end
+            end
+        end
+        -- Guild banks — search per guild (skip hidden)
+        local hiddenGuilds = NW.db.settings.hiddenGuilds or {}
+        if NW.db.guildbanks then
+            for guildKey, guildData in pairs(NW.db.guildbanks) do
+                if not hiddenGuilds[guildKey] then
+                local displayName = guildKey:match("^(.-)%-") or guildKey
+                if guildData.items then
+                    for itemID, tabCounts in pairs(guildData.items) do
+                        local name = C_Item.GetItemInfo(itemID) or ""
+                        if name:lower():find(query, 1, true) then
+                            for tabIndex, count in pairs(tabCounts) do
+                                local tabName = (guildData.tabs and guildData.tabs[tabIndex])
+                                    or ("Tab " .. tabIndex)
+                                table.insert(rows, {
+                                    charName  = "Guild: " .. displayName,
+                                    charColor = "F6AD55",
+                                    source    = tabName,
+                                    itemID    = itemID, itemName = name, count = count,
+                                })
+                            end
+                        end
+                    end
+                end
+                end   -- hiddenGuilds check
             end
         end
         table.sort(rows, function(a, b) return a.itemName < b.itemName end)
@@ -1144,7 +1234,17 @@ local function BuildInventoryPanel()
             local itemFS = rowFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
             itemFS:SetPoint("LEFT", rowFrame, "LEFT", 4, 0); itemFS:SetText(row.itemName); itemFS:SetWidth(200)
             local charFS = rowFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            charFS:SetPoint("LEFT", rowFrame, "LEFT", 210, 0); charFS:SetText(ColoredName(row.charName, row.class)); charFS:SetWidth(120)
+            charFS:SetPoint("LEFT", rowFrame, "LEFT", 210, 0)
+            if row.charColor then
+                charFS:SetText(string.format("|cff%s%s|r", row.charColor, row.charName))
+            else
+                -- Show realm when All Realms is active
+                local displayName = (not currentRealmFilter and row.realm)
+                    and (row.charName .. "|cff888888-" .. row.realm .. "|r")
+                    or row.charName
+                charFS:SetText(ColoredName(displayName, row.class))
+            end
+            charFS:SetWidth(150)
             local srcFS = rowFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
             srcFS:SetPoint("LEFT", rowFrame, "LEFT", 336, 0); srcFS:SetTextColor(0.5, 0.7, 1); srcFS:SetText(row.source); srcFS:SetWidth(160)
             local countFS = rowFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -1196,7 +1296,16 @@ local function EnsureFontSizeSlider()
     end)
 end
 
-local function BuildSettingsPanel()
+local function BuildSettingsPlaceholder()
+    ClearContent()
+    ResetScrollFrame()
+    local fs = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    fs:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4, -8)
+    fs:SetText("|cff888888Select a category from the left panel.|r")
+    scrollChild:SetHeight(CONTENT_HEIGHT)
+end
+
+local function BuildSettingsGeneralPanel()
     EnsureFontSizeSlider()
     ClearContent()
     ResetScrollFrame()
@@ -1221,7 +1330,7 @@ local function BuildSettingsPanel()
             NW.db.settings.theme == themeID and t.accent[3] or 0.3, 1)
         local tip = swatch:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         tip:SetPoint("TOP", swatch, "BOTTOM", 0, -2); tip:SetText(themeID); tip:SetTextColor(0.7, 0.7, 0.7)
-        swatch:SetScript("OnClick", function() NW.ApplyTheme(themeID); NW.ShowPanel("settings") end)
+        swatch:SetScript("OnClick", function() NW.ApplyTheme(themeID); NW.ShowPanel("settings_general") end)
     end
     yOff = yOff - swatchSize - 24
 
@@ -1274,7 +1383,7 @@ local function BuildSettingsPanel()
                 NW.ApplyFont(fname); dropBtn:SetText(fname); listFrame:Hide(); listOpen = false
             end)
         end
-        yOff = yOff - dropH - listH - 14
+        yOff = yOff - dropH - 14
     else
         local noLSM = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         noLSM:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4, yOff)
@@ -1315,7 +1424,7 @@ local function BuildSettingsPanel()
         rb:SetScript("OnClick", function()
             NW.db.settings.tooltipModifier = key
             -- Uncheck siblings by rebuilding — simplest approach
-            NW.ShowPanel("settings")
+            NW.ShowPanel("settings_general")
         end)
     end
     yOff = yOff - 28
@@ -1333,27 +1442,141 @@ local function BuildSettingsPanel()
     end)
     yOff = yOff - 30
 
-    yOff = SectionHeader(scrollChild, "CHARACTER MANAGEMENT", yOff)
+    scrollChild:SetHeight(math.max(CONTENT_HEIGHT, math.abs(yOff) + 20))
+end
+
+local function BuildSettingsCharsPanel()
+    ClearContent()
+    ResetScrollFrame()
+
+    local ROW_H = 28
+    local yOff  = -8
+
     local charList = {}
-    for key, data in pairs(NW.db.characters) do table.insert(charList, { key = key, data = data }) end
+    for key, data in pairs(NW.db.characters) do
+        table.insert(charList, { key = key, data = data })
+    end
     table.sort(charList, function(a, b) return (a.data.name or "") < (b.data.name or "") end)
+
     for _, entry in ipairs(charList) do
+        -- Checkbox show/hide
         local cb = CreateFrame("CheckButton", nil, scrollChild, "UICheckButtonTemplate")
-        cb:SetSize(24, 24); cb:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4, yOff)
+        cb:SetSize(24, 24)
+        cb:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4, yOff)
         cb:SetChecked(not NW.db.settings.hiddenChars[entry.key])
-        local lbl = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0)
-        lbl:SetText(ColoredName(entry.data.name or "?", entry.data.class)
-            .. " |cff888888" .. (entry.data.realm or "") .. "|r")
         cb:SetScript("OnClick", function(self)
             if self:GetChecked() then
                 NW.db.settings.hiddenChars[entry.key] = nil
             else
                 NW.db.settings.hiddenChars[entry.key] = true
             end
-            UpdateBottomBar()
+            if NW.RefreshUI then NW.RefreshUI() end
         end)
-        yOff = yOff - 28
+
+        -- Character name + realm label
+        local lbl = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0)
+        lbl:SetWidth(280)
+        lbl:SetText(ColoredName(entry.data.name or "?", entry.data.class)
+            .. " |cff888888" .. (entry.data.realm or "") .. "|r")
+
+        -- Remove button
+        local removeBtn = CreateFrame("Button", nil, scrollChild, "UIPanelButtonTemplate")
+        removeBtn:SetSize(70, 22)
+        removeBtn:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", CONTENT_WIDTH - 110, yOff - 2)
+        removeBtn:SetText("|cffFF6666Remove|r")
+        removeBtn:SetScript("OnClick", function()
+            NW.db.characters[entry.key] = nil
+            if NW.RefreshUI then NW.RefreshUI() end
+            NW.ShowPanel("settings_chars")
+        end)
+
+        yOff = yOff - ROW_H
+    end
+
+    scrollChild:SetHeight(math.max(CONTENT_HEIGHT, math.abs(yOff) + 20))
+end
+
+local function BuildSettingsGuildsPanel()
+    ClearContent()
+    ResetScrollFrame()
+
+    local ROW_H = 28
+    local yOff  = -8
+
+    -- Build guild list from NW.db.guildbanks keys
+    local guildList = {}
+    for guildKey, _ in pairs(NW.db.guildbanks or {}) do
+        guildList[#guildList + 1] = guildKey
+    end
+    table.sort(guildList)
+
+    if #guildList == 0 then
+        local fs = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4, yOff)
+        fs:SetText("|cff888888No guild bank data recorded yet.|r")
+        scrollChild:SetHeight(CONTENT_HEIGHT)
+        return
+    end
+
+    local hiddenGuilds = NW.db.settings.hiddenGuilds or {}
+
+    for _, guildKey in ipairs(guildList) do
+        local displayName = guildKey:match("^(.-)%-") or guildKey
+        local realm       = guildKey:match("%-(.+)$") or ""
+
+        -- Checkbox show/hide guild bank
+        local cb = CreateFrame("CheckButton", nil, scrollChild, "UICheckButtonTemplate")
+        cb:SetSize(24, 24)
+        cb:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4, yOff)
+        cb:SetChecked(not hiddenGuilds[guildKey])
+        cb:SetScript("OnClick", function(self)
+            if self:GetChecked() then
+                NW.db.settings.hiddenGuilds[guildKey] = nil
+            else
+                NW.db.settings.hiddenGuilds[guildKey] = true
+            end
+            if NW.RefreshUI then NW.RefreshUI() end
+        end)
+
+        -- Guild name + realm label
+        local lbl = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0)
+        lbl:SetWidth(280)
+        lbl:SetText(string.format("|cffF6AD55%s|r |cff888888%s|r", displayName, realm))
+
+        -- Remove button with StaticPopup confirmation
+        local removeBtn = CreateFrame("Button", nil, scrollChild, "UIPanelButtonTemplate")
+        removeBtn:SetSize(70, 22)
+        removeBtn:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", CONTENT_WIDTH - 110, yOff - 2)
+        removeBtn:SetText("|cffFF6666Remove|r")
+        removeBtn:SetScript("OnClick", function()
+            StaticPopupDialogs["NW_REMOVE_GUILD"] = {
+                text          = "Remove all data for |cffF6AD55" .. displayName .. "|r?\n\nThis will delete all characters from this guild and the guild bank. This cannot be undone.",
+                button1       = "Remove",
+                button2       = "Cancel",
+                OnAccept      = function()
+                    -- Remove guild bank
+                    NW.db.guildbanks[guildKey] = nil
+                    NW.db.settings.hiddenGuilds[guildKey] = nil
+                    -- Remove all characters belonging to this guild
+                    for charKey, char in pairs(NW.db.characters) do
+                        if char.guild == displayName then
+                            NW.db.characters[charKey] = nil
+                        end
+                    end
+                    if NW.RefreshUI then NW.RefreshUI() end
+                    NW.ShowPanel("settings_guilds")
+                end,
+                timeout       = 0,
+                whileDead     = true,
+                hideOnEscape  = true,
+                preferredIndex = 3,
+            }
+            StaticPopup_Show("NW_REMOVE_GUILD")
+        end)
+
+        yOff = yOff - ROW_H
     end
 
     scrollChild:SetHeight(math.max(CONTENT_HEIGHT, math.abs(yOff) + 20))
@@ -1371,7 +1594,10 @@ local panelBuilders = {
     currencies_misc      = BuildMiscCurrenciesPanel,
     currencies_pvp       = BuildPvPCurrenciesPanel,
     inventory            = BuildInventoryPanel,
-    settings             = BuildSettingsPanel,
+    settings             = BuildSettingsPlaceholder,
+    settings_general     = BuildSettingsGeneralPanel,
+    settings_chars       = BuildSettingsCharsPanel,
+    settings_guilds      = BuildSettingsGuildsPanel,
 }
 
 function NW.ShowPanel(id)

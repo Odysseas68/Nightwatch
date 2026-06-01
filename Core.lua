@@ -27,6 +27,7 @@ local DB_DEFAULTS = {
             angle = 45,
         },
         hiddenChars     = {},
+        hiddenGuilds    = {},
         navExpanded     = {},
         tooltipModifier = "ALT",
     },
@@ -103,6 +104,8 @@ local function InitDB()
     for _, char in pairs(NightwatchDB.characters) do
         char.warbank     = nil
         char.warbankTabs = nil
+        -- Migrate: ensure guild field exists on all character entries
+        if char.guild == nil then char.guild = "" end
     end
 
     NW.db = NightwatchDB

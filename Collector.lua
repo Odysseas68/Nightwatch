@@ -57,6 +57,7 @@ local function NewCharEntry(name, realm)
         reagentbag  = {},
         faction     = "",
         restedXP    = 0,
+        guild       = "",
         professions = {},
     }
 end
@@ -76,6 +77,7 @@ local function SnapshotCharacterInfo(entry)
     entry.gold        = GetMoney() or 0
     entry.lastSeen    = time()
     entry.faction     = UnitFactionGroup("player") or "Neutral"
+    entry.guild       = (IsInGuild() and GetGuildInfo("player")) or ""
     local restedXP    = (GetXPExhaustion and GetXPExhaustion()) or 0
     local maxXP       = UnitXPMax("player") or 1
     entry.restedXP    = math.floor((restedXP / maxXP) * 100)

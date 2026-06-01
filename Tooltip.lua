@@ -1,7 +1,7 @@
 -- ============================================================
 -- Addon   : Nightwatch
 -- File    : Tooltip.lua
--- Version : 2026.05.24
+-- Version : 2026.06.01
 -- Desc    : Item tooltip injection — shows per-char counts on Alt hover
 -- ============================================================
 local _, NW = ...
@@ -46,8 +46,10 @@ local function GetItemCounts(itemID)
 
     -- Guild banks — per guild, keyed by "GuildName-Realm"
     local guildbanks = {}
+    local hiddenGuilds = NW.db.settings.hiddenGuilds or {}
     if NW.db.guildbanks then
         for guildKey, guildData in pairs(NW.db.guildbanks) do
+            if not hiddenGuilds[guildKey] then
             local gbItems = guildData.items and guildData.items[itemID]
             if gbItems then
                 local tabs  = {}
@@ -67,6 +69,7 @@ local function GetItemCounts(itemID)
                     total = total,
                 }
             end
+            end   -- hiddenGuilds check
         end
     end
 

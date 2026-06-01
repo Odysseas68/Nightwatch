@@ -44,6 +44,7 @@ NightwatchDB = {
             reagentbag   = {},             -- bag 5 only, itemID = count
             bank         = {},             -- character bank tabs, itemID = count
             -- warbank and warbankTabs moved to account level (see below)
+            guild        = "",              -- guild name at last login ("" if not in a guild)
             professions  = {},             -- { [parentSkillLine] = { name, icon, skillLevel, maxSkillLevel, isPrimary, enumProfession, totalSkill, totalMaxSkill, expansions={} } }
         }
     },
@@ -60,8 +61,9 @@ NightwatchDB = {
             angle = 45,                   -- degrees around minimap, 0-360
         },
         hiddenChars        = {},          -- ["Name-Realm"] = true to hide
+        hiddenGuilds       = {},          -- ["GuildName-Realm"] = true to hide guild bank from tooltip and inventory
         navExpanded        = {},          -- ["navItemId"] = true when expanded — persisted across sessions
-        tooltipModifier    = "ALT",       -- modifier key for item tooltip counts: ALT / CTRL / SHIFT
+        tooltipModifier    = "ALT",       -- modifier key for item tooltip counts: ALT / CTRL / SHIFT / NONE
     }
 }
 ```
@@ -158,6 +160,7 @@ NightwatchDB = {
 - Warbank is account-wide — always read/write from `NW.db.warbank` and `NW.db.warbankTabs`, never from character entries
 - warbank DB structure is `warbank[itemID][bagID] = count` — never flatten to `warbank[itemID] = count`
 - Guild bank is per-guild — stored at `NW.db.guildbanks["GuildName-Realm"]`; never store under character entries
+- `guild` field on character entries stores the guild name (not key) at snapshot time — used for guild-based character deletion; "" if not in a guild
 - **No `goto` or `::label::` syntax** — WoW uses Lua 5.1 which does not support these; use nested `if` guards instead
 - `GetXPExhaustion()` is valid in Retail 12.0+ — returns rested XP or `nil` when not rested; always use safe pattern: `(GetXPExhaustion and GetXPExhaustion()) or 0`. `C_XP` namespace does not exist.
 - All files must have a standard header comment block: `-- Addon : Nightwatch / -- File : FileName.lua / -- Version : YYYY.MM.DD / -- Desc : brief description`
